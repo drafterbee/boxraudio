@@ -24,9 +24,9 @@ Invoke with the `boxraudio` command.
 - **Disk space pre-check** — fail fast before destructive operations
 - **Interrupt-safe resume** — pick up where you left off after Ctrl+C
 
-### Audio Intelligence (Phase 2)
-- **Spectrum analysis** — detect lossy files repackaged as FLAC
-- **AcoustID fingerprinting** — match audio content, not just tags
+### Audio Intelligence
+- **Spectrum analysis** — detect lossy files repackaged as FLAC via FFT analysis
+- **AcoustID fingerprinting** — match audio content, not just tags (requires `chromaprint`)
 - **Quality reporting** — see your library's bitrate and format composition
 - **Tag quality checks** — flag files with missing or malformed metadata
 
@@ -79,6 +79,15 @@ boxraudio --interactive
 
 # Typical workflow with a saved profile
 boxraudio --profile ipod --run
+
+# Audit a library for lossy FLAC transcodes
+boxraudio --audit-quality --target "/Volumes/Media Backup/Audio/FLAC"
+
+# Audit tag quality
+boxraudio --audit-tags --target "/Volumes/Media Backup/Audio"
+
+# Library quality report
+boxraudio --report-quality --target "/Volumes/Media Backup/Audio"
 
 # Manual full pipeline
 boxraudio \
@@ -134,8 +143,9 @@ boxraudio/
 │   ├── cache.py             # SQLite cache
 │   ├── transaction.py       # Action logging + undo
 │   ├── scanner.py           # Parallel tag scanning
-│   ├── fingerprint.py       # AcoustID/Chromaprint (Phase 2)
-│   ├── spectrum.py          # Lossy detection via FFT (Phase 2)
+│   ├── fingerprint.py       # AcoustID/Chromaprint
+│   ├── spectrum.py          # Lossy detection via FFT
+│   ├── audits.py            # Quality & tag audits
 │   ├── operations.py        # File operations primitives
 │   ├── stats.py             # Library stats + history (Phase 3)
 │   ├── preflight.py         # Disk space + pre-flight summary

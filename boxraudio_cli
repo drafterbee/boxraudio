@@ -82,6 +82,17 @@ def main():
     parser.add_argument("--history", action="store_true",
                         help="Show recent sessions")
 
+    # Phase 2 audits
+    parser.add_argument("--audit-quality", action="store_true",
+                        help="Run spectrum analysis to detect lossy transcodes")
+    parser.add_argument("--audit-tags", action="store_true",
+                        help="Audit tag quality (missing/suspicious metadata)")
+    parser.add_argument("--report-quality", action="store_true",
+                        help="Generate a library quality report (format, bitrate, size)")
+    parser.add_argument("--target", metavar="PATH",
+                        help="Target directory for audit/report commands "
+                             "(defaults to --backup, --source, or first --dedupe-search)")
+
     parser.add_argument("--report",    metavar="FILE",
                         help="Save full report to this file (Phase 3)")
     parser.add_argument("--no-banner", action="store_true",
@@ -136,6 +147,15 @@ def main():
 
 [yellow]7. See recent sessions:[/yellow]
    boxraudio --history
+
+[yellow]8. Audit library for lossy files repackaged as FLAC (spectrum analysis):[/yellow]
+   boxraudio --audit-quality --target "/Volumes/Media Backup/Audio/FLAC"
+
+[yellow]9. Audit library tags for missing or suspicious metadata:[/yellow]
+   boxraudio --audit-tags --target "/Volumes/Media Backup/Audio"
+
+[yellow]10. Generate a library quality and composition report:[/yellow]
+   boxraudio --report-quality --target "/Volumes/Media Backup/Audio"
 """
         ui.console.print(examples)
         sys.exit(0)
@@ -191,6 +211,51 @@ def main():
     if args.interactive:
         ui.warning("Interactive mode is a Phase 3 feature — coming soon.")
         sys.exit(0)
+
+    # ── Phase 2 audits ────────────────────────────────────────────────────────
+    if args.audit_quality or args.audit_tags or args.report_quality:
+        # Determine target directory
+        target = args.target
+        if not target:
+            # Fall back to backup, then source, then first dedupe-search
+            target = args.backup or args.source
+            if not target and args.dedupe_search:
+                target = args.dedupe_search[0]
+            # Then check profile
+            if not target and args.profile:
+                try:
+                    profile = get_profile(config, args.profile)
+                    target = profile.get("backup") or profile.get("source")
+                    if not target and profile.get("dedupe_search"):
+                        target = profile["dedupe_search"][0]
+                except ConfigError:
+                    pass
+
+        if not target:
+            ui.error("Audit/report commands need --target, --source, --backup, "
+                     "or a --profile that provides one.")
+            sys.exit(1)
+
+        target = os.path.expanduser(target)
+
+        defaults_for_audit = get_defaults(config)
+        cache_path = (args.cache_file or
+                      defaults_for_audit.get("cache_file"))
+        workers = args.workers or defaults_for_audit.get("workers", 4)
+
+        from boxraudio import audits
+
+        if args.report_quality:
+            audits.quality_report(target, cache_path=cache_path, workers=workers)
+
+        if args.audit_tags:
+            audits.tag_audit(target, cache_path=cache_path, workers=workers)
+
+        if args.audit_quality:
+            audits.spectrum_audit(target)
+
+        sys.exit(0)
+    # ──────────────────────────────────────────────────────────────────────────
 
     defaults = get_defaults(config)
 
