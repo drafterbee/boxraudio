@@ -1,0 +1,56 @@
+# BoxR configuration
+# Located at ~/.boxraudio.yaml
+#
+# Global defaults apply to all runs unless overridden by flags or profile.
+# Profiles let you save common command-line invocations under a short name.
+#
+# Usage:
+#   boxraudio --profile ipod --run
+#   boxraudio --profile ipod --source ~/Downloads/extra --run
+#
+# Path concepts:
+#   source            — where new files come from (e.g. ~/Desktop/MusicTFR)
+#   backup            — where source files get MOVED to (preserves Artist/Album)
+#   destination       — default sync target (used when no sync_destination given)
+#   sync_source       — explicit rsync source root (defaults to backup, then source)
+#   sync_destination  — explicit rsync target root (defaults to destination)
+#
+# When backup and destination have different structures (e.g. backup is
+# /Audio/FLAC but destination is /Audio), use sync_source and sync_destination
+# to control exactly which directories get mirrored.
+
+defaults:
+  cache_file: ~/.boxraudio_cache.db
+  workers: 4
+  size_only: true
+  show_banner: true
+
+profiles:
+  ipod:
+    source: ~/Desktop/MusicTFR
+    backup: /Volumes/Media Backup/Audio/FLAC
+    destination: /Volumes/IPOD/Audio
+    sync_source: /Volumes/Media Backup/Audio/FLAC
+    sync_destination: /Volumes/IPOD/Audio/FLAC
+    dedupe_format: mp3
+    dedupe_search:
+      - /Volumes/Media Backup/Audio/MP3
+      - /Volumes/IPOD/Audio/MP3
+    clean_empty_dirs: true
+    mirror: true
+    size_only: true
+
+  # Example: sync MP3s separately
+  # ipod_mp3:
+  #   source: ~/Desktop/MusicTFR_MP3
+  #   backup: /Volumes/Media Backup/Audio/MP3
+  #   sync_source: /Volumes/Media Backup/Audio/MP3
+  #   sync_destination: /Volumes/IPOD/Audio/MP3
+  #   mirror: true
+
+  # Example: full library mirror (no FLAC/MP3 separation)
+  # phone:
+  #   source: ~/Desktop/MusicTFR
+  #   backup: /Volumes/Media Backup/Audio
+  #   destination: /Volumes/Phone/Music
+  #   mirror: true

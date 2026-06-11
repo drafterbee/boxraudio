@@ -1,0 +1,265 @@
+#!/usr/bin/env python3
+"""
+boxraudio — BoxR CLI entry point.
+
+Smart sync, lossless integrity — open-source music library management
+for people who care about their files.
+"""
+
+import sys
+import os
+import argparse
+
+if "/usr/local/lib" not in sys.path:
+    sys.path.insert(0, "/usr/local/lib")
+
+_script_dir = os.path.dirname(os.path.realpath(__file__))
+if _script_dir not in sys.path:
+    sys.path.insert(0, _script_dir)
+
+
+def main():
+    from boxraudio import ui
+    from boxraudio.banner import print_banner
+    from boxraudio.config import (
+        load_config, get_profile, list_profiles, get_defaults, ConfigError
+    )
+
+    parser = argparse.ArgumentParser(
+        prog="boxraudio",
+        description="BoxR — versatile media library sync, dedup, and cleanup tool.",
+        formatter_class=argparse.RawDescriptionHelpFormatter,
+        epilog="Run with --examples for usage examples. Run with --help for full options.",
+    )
+    parser.add_argument("--profile", metavar="NAME",
+                        help="Load settings from a named profile in ~/.boxraudio.yaml")
+    parser.add_argument("--list-profiles", action="store_true",
+                        help="List available profiles from config and exit")
+    parser.add_argument("--config", metavar="PATH",
+                        help="Path to alternate config file (default: ~/.boxraudio.yaml)")
+
+    parser.add_argument("--source",      metavar="PATH",
+                        help="Source directory (new files to process)")
+    parser.add_argument("--backup",      metavar="PATH",
+                        help="Backup directory (files moved here from source)")
+    parser.add_argument("--destination", metavar="PATH",
+                        help="Destination directory (typically a device — used as default sync target)")
+    parser.add_argument("--sync-source", metavar="PATH",
+                        help="Override source root for the final rsync (default: backup, then source)")
+    parser.add_argument("--sync-destination", metavar="PATH",
+                        help="Override destination root for the final rsync (default: destination)")
+
+    parser.add_argument("--dedupe-format", metavar="EXT",
+                        help="File extension to deduplicate (e.g. mp3)")
+    parser.add_argument("--dedupe-search", metavar="PATH", action="append",
+                        help="Directory to search for duplicates "
+                             "(may be specified multiple times)")
+    parser.add_argument("--clean-empty-dirs", action="store_true",
+                        help="Remove empty/audio-free directories after dedup")
+
+    parser.add_argument("--mirror",      action="store_true",
+                        help="rsync with --delete (mirror destination to backup)")
+    parser.add_argument("--size-only",   action="store_true",
+                        help="rsync compares files by size only (recommended for FAT32)")
+    parser.add_argument("--rsync-flags", metavar="FLAGS",
+                        help="Extra rsync flags (advanced)")
+
+    parser.add_argument("--workers", type=int, metavar="N",
+                        help="Parallel tag-reading workers (default: 4)")
+
+    parser.add_argument("--cache-file",    metavar="PATH",
+                        help="Cache file location (default: ~/.boxraudio_cache.db)")
+    parser.add_argument("--rebuild-cache", action="store_true",
+                        help="Discard existing cache and rebuild from scratch")
+
+    parser.add_argument("--run",        action="store_true",
+                        help="Execute changes (default is dry run)")
+    parser.add_argument("--no-confirm", action="store_true",
+                        help="Skip YES confirmations (use with caution)")
+
+    parser.add_argument("--undo", action="store_true",
+                        help="Undo the most recent completed session")
+    parser.add_argument("--history", action="store_true",
+                        help="Show recent sessions")
+
+    parser.add_argument("--report",    metavar="FILE",
+                        help="Save full report to this file (Phase 3)")
+    parser.add_argument("--no-banner", action="store_true",
+                        help="Suppress the ASCII banner")
+    parser.add_argument("--examples",  action="store_true",
+                        help="Show example usage and exit")
+    parser.add_argument("--interactive", action="store_true",
+                        help="Guided interactive mode (Phase 3)")
+    parser.add_argument("--version",   action="store_true",
+                        help="Show version and exit")
+
+    args = parser.parse_args()
+
+    if args.version:
+        from boxraudio import __version__, __appname__
+        print(f"{__appname__} (boxraudio) {__version__}")
+        sys.exit(0)
+
+    if not args.no_banner:
+        print_banner()
+
+    if args.examples:
+        examples = """
+[bold bright_cyan]EXAMPLE USAGE:[/bold bright_cyan]
+
+[yellow]1. Full workflow — move FLACs to backup, dedupe MP3s, mirror to iPod:[/yellow]
+   boxraudio \\
+     --source ~/Desktop/MusicTFR \\
+     --backup "/Volumes/Media Backup/Audio/FLAC" \\
+     --destination /Volumes/IPOD/Audio \\
+     --dedupe-format mp3 \\
+     --dedupe-search "/Volumes/Media Backup/Audio/MP3" \\
+     --clean-empty-dirs --mirror --size-only --run
+
+[yellow]2. Just back up new files (no device sync):[/yellow]
+   boxraudio --source ~/Downloads/NewMusic \\
+             --backup ~/MusicLibrary --run
+
+[yellow]3. Sync a library to a portable device:[/yellow]
+   boxraudio --source ~/MusicLibrary \\
+             --destination /Volumes/USB \\
+             --mirror --size-only --run
+
+[yellow]4. Use a saved profile:[/yellow]
+   boxraudio --profile ipod --run
+
+[yellow]5. Dry run (default — no changes made):[/yellow]
+   boxraudio --source ~/Desktop/MusicTFR --backup ~/MusicLibrary
+
+[yellow]6. Undo the most recent run:[/yellow]
+   boxraudio --undo
+
+[yellow]7. See recent sessions:[/yellow]
+   boxraudio --history
+"""
+        ui.console.print(examples)
+        sys.exit(0)
+
+    try:
+        config = load_config(args.config)
+    except ConfigError as e:
+        ui.error(str(e))
+        sys.exit(1)
+
+    if args.list_profiles:
+        profiles = list_profiles(config)
+        if not profiles:
+            ui.warning("No profiles defined in config.")
+        else:
+            ui.kv_table("Available profiles",
+                        {p: "Use with --profile " + p for p in profiles})
+        sys.exit(0)
+
+    if args.undo:
+        from boxraudio.transaction import TransactionLog
+        tx = TransactionLog()
+        last = tx.last_session()
+        if not last:
+            ui.warning("No previous completed session to undo.")
+            sys.exit(0)
+        ui.section(f"Undo session {last['id']}: {last.get('description', '')}")
+        if not args.no_confirm:
+            if not ui.confirm("Reverse all actions in this session?", default=False):
+                ui.warning("Cancelled.")
+                sys.exit(0)
+        restored, errors = tx.undo_session(last["id"])
+        ui.success(f"Restored {restored} items ({errors} errors)")
+        sys.exit(0)
+
+    if args.history:
+        from boxraudio.transaction import TransactionLog
+        tx = TransactionLog()
+        sessions = tx.list_sessions(limit=20)
+        if not sessions:
+            ui.warning("No sessions recorded yet.")
+            sys.exit(0)
+        import time
+        ui.section("Recent sessions")
+        rows = {}
+        for s in sessions:
+            started = time.strftime("%Y-%m-%d %H:%M", time.localtime(s["started_at"]))
+            label = f"#{s['id']:>4}  {started}  [{s['status']}]"
+            rows[label] = s.get("description", "")
+        ui.kv_table("Session history", rows)
+        sys.exit(0)
+
+    if args.interactive:
+        ui.warning("Interactive mode is a Phase 3 feature — coming soon.")
+        sys.exit(0)
+
+    defaults = get_defaults(config)
+
+    pipeline_args = {
+        "source":           defaults.get("source"),
+        "backup":           defaults.get("backup"),
+        "destination":      defaults.get("destination"),
+        "sync_source":      defaults.get("sync_source"),
+        "sync_destination": defaults.get("sync_destination"),
+        "dedupe_format":    defaults.get("dedupe_format"),
+        "dedupe_search":    defaults.get("dedupe_search") or [],
+        "clean_empty_dirs": defaults.get("clean_empty_dirs", False),
+        "mirror":           defaults.get("mirror", False),
+        "size_only":        defaults.get("size_only", True),
+        "rsync_flags":      defaults.get("rsync_flags"),
+        "cache_file":       defaults.get("cache_file"),
+        "workers":          defaults.get("workers", 4),
+        "dry_run":          not args.run,
+        "no_confirm":       args.no_confirm,
+        "rebuild_cache":    args.rebuild_cache,
+        "profile":          args.profile,
+        "report":           args.report,
+    }
+
+    if args.profile:
+        try:
+            profile = get_profile(config, args.profile)
+        except ConfigError as e:
+            ui.error(str(e))
+            sys.exit(1)
+        for k, v in profile.items():
+            if k in pipeline_args and v is not None:
+                pipeline_args[k] = v
+
+    cli_overrides = {
+        "source":           args.source,
+        "backup":           args.backup,
+        "destination":      args.destination,
+        "sync_source":      args.sync_source,
+        "sync_destination": args.sync_destination,
+        "dedupe_format":    args.dedupe_format,
+        "dedupe_search":    args.dedupe_search,
+        "rsync_flags":      args.rsync_flags,
+        "cache_file":       args.cache_file,
+        "workers":          args.workers,
+    }
+    for k, v in cli_overrides.items():
+        if v is not None:
+            pipeline_args[k] = v
+
+    if args.clean_empty_dirs:
+        pipeline_args["clean_empty_dirs"] = True
+    if args.mirror:
+        pipeline_args["mirror"] = True
+    if args.size_only:
+        pipeline_args["size_only"] = True
+
+    for k in ("source", "backup", "destination", "sync_source", "sync_destination", "cache_file"):
+        if pipeline_args.get(k):
+            pipeline_args[k] = os.path.expanduser(pipeline_args[k])
+    if pipeline_args.get("dedupe_search"):
+        pipeline_args["dedupe_search"] = [
+            os.path.expanduser(p) for p in pipeline_args["dedupe_search"]
+        ]
+
+    from boxraudio.pipeline import run_pipeline
+    exit_code = run_pipeline(pipeline_args)
+    sys.exit(exit_code)
+
+
+if __name__ == "__main__":
+    main()
