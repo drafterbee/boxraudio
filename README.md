@@ -26,15 +26,16 @@ Invoke with the `boxraudio` command.
 
 ### Audio Intelligence
 - **Spectrum analysis** — detect lossy files repackaged as FLAC via FFT analysis
-- **AcoustID fingerprinting** — match audio content, not just tags (requires `chromaprint`)
+- **AcoustID fingerprinting** — match audio content, not just tags (requires chromaprint)
 - **Quality reporting** — see your library's bitrate and format composition
 - **Tag quality checks** — flag files with missing or malformed metadata
 
 ### User Experience
 - **Rich terminal UI** — beautiful tables, progress bars, and panels
-- **Interactive mode** — guided prompts for occasional use (Phase 3)
+- **Interactive mode** — guided prompts via `--interactive`
 - **Profiles** — save common workflows in `~/.boxraudio.yaml`
 - **Pre-flight summary** — see exactly what will change before committing
+- **Dry-run diff view** — colored summary of additions/removals before sync
 
 ### Performance
 - **Parallel tag reading** — uses all CPU cores
@@ -42,23 +43,23 @@ Invoke with the `boxraudio` command.
 - **Incremental scanning** — skip unchanged directories
 
 ### Workflow
-- **Multi-destination sync** — push to multiple devices in one command (Phase 3)
-- **Stats and history** — track library growth and transfer activity (Phase 3)
-- **Dry-run diff view** — see additions/removals/changes as a colored diff (Phase 3)
+- **Multi-destination sync** — push to multiple devices in one command (sequential)
+- **Stats and history** — track library growth, transfer activity, errors
+- **Content-based dedup** — match duplicates by audio fingerprint, not just tags
 
 ---
 
 ## Installation
 
 ```bash
-git clone https://github.com/YOUR_USERNAME/boxraudio.git
+git clone https://github.com/drafterbee/boxraudio.git
 cd boxraudio
 bash install.sh
 ```
 
 The installer will:
-1. Install Python dependencies (`mutagen`, `tqdm`, `rich`, `pyyaml`, `numpy`, `scipy`, `pyacoustid`, `psutil`)
-2. Verify `chromaprint` is installed (or prompt to install via Homebrew)
+1. Install Python dependencies
+2. Verify chromaprint is installed (or prompt to install via Homebrew)
 3. Copy the package to `/usr/local/lib/boxraudio/`
 4. Install the `boxraudio` command to `/usr/local/bin/`
 5. Create default config at `~/.boxraudio.yaml`
@@ -68,44 +69,37 @@ The installer will:
 ## Quick Start
 
 ```bash
-# See examples
-boxraudio --examples
+boxraudio --examples            # see usage examples
+boxraudio --help                # full options reference
+boxraudio --interactive         # guided setup
+boxraudio --profile ipod --run  # run with a saved profile
 
-# Show help
-boxraudio --help
+# Audits
+boxraudio --audit-quality --target "/path/to/library"
+boxraudio --audit-tags    --target "/path/to/library"
+boxraudio --report-quality --target "/path/to/library"
 
-# Interactive mode (Phase 3)
-boxraudio --interactive
+# Stats and history
+boxraudio --stats
+boxraudio --history --detailed
 
-# Typical workflow with a saved profile
-boxraudio --profile ipod --run
+# Undo / resume
+boxraudio --undo
+boxraudio --resume
+boxraudio --list-resumable
 
-# Audit a library for lossy FLAC transcodes
-boxraudio --audit-quality --target "/Volumes/Media Backup/Audio/FLAC"
+# Multi-destination sequential sync
+boxraudio --profile ipod --profile phone --run
 
-# Audit tag quality
-boxraudio --audit-tags --target "/Volumes/Media Backup/Audio"
-
-# Library quality report
-boxraudio --report-quality --target "/Volumes/Media Backup/Audio"
-
-# Manual full pipeline
-boxraudio \
-  --source ~/Desktop/MusicTFR \
-  --backup "/Volumes/Media Backup/Audio/FLAC" \
-  --destination /Volumes/IPOD/Audio \
-  --dedupe-format mp3 \
-  --dedupe-search "/Volumes/Media Backup/Audio/MP3" \
-  --clean-empty-dirs \
-  --mirror --size-only \
-  --run
+# Content-based dedup using fingerprints
+boxraudio --profile ipod --dedupe-method fingerprint --run
 ```
 
 ---
 
 ## Configuration
 
-Edit `~/.boxraudio.yaml` to define reusable profiles:
+Edit `~/.boxraudio.yaml`:
 
 ```yaml
 defaults:
@@ -117,15 +111,23 @@ profiles:
   ipod:
     source: ~/Desktop/MusicTFR
     backup: /Volumes/Media Backup/Audio/FLAC
-    destination: /Volumes/IPOD/Audio
+    destination: /Volumes/IPOD/Audio/FLAC
+    sync_source: /Volumes/Media Backup/Audio/FLAC
+    sync_destination: /Volumes/IPOD/Audio/FLAC
     dedupe_format: mp3
     dedupe_search:
       - /Volumes/Media Backup/Audio/MP3
+      - /Volumes/IPOD/Audio/MP3
     clean_empty_dirs: true
+    mirror: true
+
+  phone:
+    source: ~/Desktop/MusicTFR
+    destination: /Volumes/Phone/Music
     mirror: true
 ```
 
-Then: `boxraudio --profile ipod --run`
+Then: `boxraudio --profile ipod --run` or `boxraudio --profile ipod --profile phone --run`
 
 ---
 
@@ -133,22 +135,24 @@ Then: `boxraudio --profile ipod --run`
 
 ```
 boxraudio/
-├── boxraudio                # CLI entry point
+├── boxraudio_cli            # CLI entry point
 ├── install.sh               # Installer
 ├── requirements.txt         # Python deps
 ├── boxraudio/               # Python package
 │   ├── banner.py            # ASCII art
 │   ├── config.py            # YAML config + profiles
 │   ├── ui.py                # Rich-based UI
-│   ├── cache.py             # SQLite cache
+│   ├── cache.py             # SQLite tag cache
 │   ├── transaction.py       # Action logging + undo
 │   ├── scanner.py           # Parallel tag scanning
 │   ├── fingerprint.py       # AcoustID/Chromaprint
 │   ├── spectrum.py          # Lossy detection via FFT
 │   ├── audits.py            # Quality & tag audits
 │   ├── operations.py        # File operations primitives
-│   ├── stats.py             # Library stats + history (Phase 3)
+│   ├── stats.py             # Library stats + history
 │   ├── preflight.py         # Disk space + pre-flight summary
+│   ├── resume.py            # Interrupt-safe checkpointing
+│   ├── interactive.py       # Guided interactive mode
 │   └── pipeline.py          # Workflow orchestration
 └── README.md
 ```
@@ -163,4 +167,4 @@ MIT — see `LICENSE`
 
 ## Author
 
-Built by Ben — Archiframe Integration, Los Angeles.
+Built by DrafterBee.
