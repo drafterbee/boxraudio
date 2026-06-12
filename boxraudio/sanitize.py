@@ -506,7 +506,9 @@ def sanitize_directory(directory: str,
                               strip_patterns, dry_run)
             results.append(r)
             if r.get("errors"):
-                errors.extend((fp, e) for e in r["errors"])
+                for e in r["errors"]:
+                    errors.append((fp, e))
+                    progress.console.print(f"  [red]ERROR[/red] {fp}: {e}")
             if r.get("changed"):
                 modified += 1
             if r.get("art_bytes", 0) > art_threshold_bytes:

@@ -28,7 +28,7 @@ def main():
         formatter_class=argparse.RawDescriptionHelpFormatter,
         epilog="Run with --examples for usage examples.",
     )
-    parser.add_argument("--profile", action="append", metavar="NAME",
+    parser.add_argument("-p", "--profile", action="append", metavar="NAME",
                         help="Load settings from a profile (can be specified multiple times for sequential runs)")
     parser.add_argument("--list-profiles", action="store_true",
                         help="List available profiles from config and exit")
@@ -36,11 +36,11 @@ def main():
                         help="Path to alternate config file")
 
     # Paths
-    parser.add_argument("--source",          metavar="PATH",
+    parser.add_argument("-s", "--source",          metavar="PATH",
                         help="Source directory (new files to process)")
-    parser.add_argument("--backup",          metavar="PATH",
+    parser.add_argument("-b", "--backup",          metavar="PATH",
                         help="Backup directory (files moved here from source)")
-    parser.add_argument("--destination",     metavar="PATH", action="append",
+    parser.add_argument("-d", "--destination",     metavar="PATH", action="append",
                         help="Destination directory (can be specified multiple times)")
     parser.add_argument("--sync-source",     metavar="PATH",
                         help="Override sync source root")
@@ -76,7 +76,7 @@ def main():
                         help="Discard existing cache and rebuild")
 
     # Safety
-    parser.add_argument("--run",        action="store_true",
+    parser.add_argument("-r", "--run",        action="store_true",
                         help="Execute changes (default is dry run)")
     parser.add_argument("--no-confirm", action="store_true",
                         help="Skip YES confirmations")
@@ -98,17 +98,17 @@ def main():
                         help="List interrupted sessions available for resume")
 
     # Audits (Phase 2)
-    parser.add_argument("--audit-quality", action="store_true",
+    parser.add_argument("-Q", "--audit-quality", action="store_true",
                         help="Run spectrum analysis to detect lossy transcodes")
     parser.add_argument("--audit-tags", action="store_true",
                         help="Audit tag quality (missing/suspicious metadata)")
-    parser.add_argument("--report-quality", action="store_true",
+    parser.add_argument("-R", "--report-quality", action="store_true",
                         help="Generate a library quality report")
-    parser.add_argument("--target", metavar="PATH",
+    parser.add_argument("-t", "--target", metavar="PATH",
                         help="Target directory for audit/report commands")
 
     # Sanitization (Phase 4)
-    parser.add_argument("--sanitize-tags", action="store_true",
+    parser.add_argument("-S", "--sanitize-tags", action="store_true",
                         help="Strip superfluous metadata from files (standalone command)")
     parser.add_argument("--sanitize-on-move", action="store_true",
                         help="Auto-sanitize files as they move from source to backup")
@@ -130,9 +130,9 @@ def main():
                         help="Suppress the ASCII banner")
     parser.add_argument("--examples",  action="store_true",
                         help="Show example usage and exit")
-    parser.add_argument("--interactive", action="store_true",
+    parser.add_argument("-i", "--interactive", action="store_true",
                         help="Guided interactive mode")
-    parser.add_argument("--version",   action="store_true",
+    parser.add_argument("-V", "--version",   action="store_true",
                         help="Show version and exit")
 
     args = parser.parse_args()
@@ -378,7 +378,12 @@ def main():
             )
 
         if result["errors"]:
-            ui.warning(f"{len(result['errors'])} errors occurred — see logs above")
+            ui.warning(f"{len(result['errors'])} errors occurred:")
+            ui.file_table(
+                "Sanitization errors",
+                [f"{fp}  —  {err}" for fp, err in result["errors"]],
+                limit=50,
+            )
 
         sys.exit(0)
 
