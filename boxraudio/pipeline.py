@@ -216,6 +216,12 @@ def run_pipeline(args: dict) -> int:
     profile_name       = args.get("profile")
     resume_checkpoint  = args.get("resume_checkpoint")  # passed when resuming
 
+    # Sanitization options
+    sanitize_on_move   = args.get("sanitize_on_move", False)
+    strip_art          = args.get("strip_art", False)
+    strip_lyrics       = args.get("strip_lyrics", False)
+    keep_tags_extra    = args.get("keep_tags") or []
+
     # Back-compat: also accept singular destination
     if not destinations and args.get("destination"):
         destinations = [args["destination"]]
@@ -290,6 +296,8 @@ def run_pipeline(args: dict) -> int:
     step_titles = ["Index source files"]
     if backup:
         step_titles.append("Move to backup")
+    if sanitize_on_move and backup:
+        step_titles.append("Sanitize tags")
     if dedup_fmt:
         for sp in dedup_search:
             step_titles.append(f"Dedupe .{dedup_fmt} in {os.path.basename(sp.rstrip('/'))}")
@@ -380,6 +388,38 @@ def run_pipeline(args: dict) -> int:
         else:
             ui.success(f"Moved {moved} items ({errors} errors)")
             stats.record_metrics(files_moved=moved, errors=errors)
+
+    # ── STEP — Sanitize tags on moved files (optional) ───────────────────────
+    if sanitize_on_move and backup:
+        current_step += 1
+        ui.step_header(current_step, total_steps, "Sanitizing tags on moved files")
+
+        from boxraudio.sanitize import (
+            sanitize_directory, DEFAULT_KEEP_TAGS, ALWAYS_STRIP_PATTERNS
+        )
+        keep_tags_set = set(DEFAULT_KEEP_TAGS)
+        for t in keep_tags_extra:
+            keep_tags_set.add(t.lower())
+
+        ui.info(f"Strip album art:  {'yes' if strip_art else 'no (keep)'}")
+        ui.info(f"Strip lyrics:     {'yes' if strip_lyrics else 'no (keep)'}")
+        ui.info(f"Keep tags: {len(keep_tags_set)} entries")
+
+        if dry_run:
+            ui.dim(f"DRY RUN — would sanitize files in {backup}")
+        else:
+            sanitize_result = sanitize_directory(
+                backup,
+                keep_tags=keep_tags_set,
+                strip_art=strip_art,
+                strip_lyrics=strip_lyrics,
+                strip_patterns=ALWAYS_STRIP_PATTERNS,
+                dry_run=False,
+            )
+            ui.success(f"Sanitized {sanitize_result['modified_files']:,} files")
+            if sanitize_result["errors"]:
+                ui.warning(f"{len(sanitize_result['errors'])} sanitization errors")
+                stats.record_metrics(errors=len(sanitize_result["errors"]))
 
     # ── STEP — Dedupe in each search location ─────────────────────────────────
     if dedup_fmt:

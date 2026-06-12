@@ -138,8 +138,9 @@ SUSPICIOUS_TAG_VALUES = {
 TRACK_NUM_PATTERN = re.compile(r"^track\s*\d+$", re.IGNORECASE)
 
 
-def tag_audit(directory: str, cache_path: str = None, workers: int = 4):
-    """Find files with missing or suspicious metadata."""
+def tag_audit(directory: str, cache_path: str = None, workers: int = 4,
+              art_size_threshold_mb: float = 1.0):
+    """Find files with missing/suspicious metadata. Also report oversized embedded art."""
     ui.section(f"Tag audit — {directory}")
 
     if not os.path.isdir(directory):
@@ -164,6 +165,9 @@ def tag_audit(directory: str, cache_path: str = None, workers: int = 4):
     missing_all      = []
     suspicious_tags  = []
     filename_mismatch = []
+    oversized_art    = []
+
+    art_threshold_bytes = int(art_size_threshold_mb * 1024 * 1024)
 
     for entry in scan["all"]:
         artist = entry.get("artist") or ""
@@ -183,19 +187,48 @@ def tag_audit(directory: str, cache_path: str = None, workers: int = 4):
             if value.lower() in SUSPICIOUS_TAG_VALUES or TRACK_NUM_PATTERN.match(value):
                 suspicious_tags.append((fp, label, value))
 
-        # Check title vs filename
         if title:
             filename_base = Path(fp).stem.lower()
-            # Strip leading track numbers and separators
             filename_clean = re.sub(r"^[0-9\-_\s\.]+", "", filename_base).strip()
             if (filename_clean and
                 title.lower() not in filename_clean and
                 filename_clean not in title.lower()):
-                # Only flag if there's no overlap at all
                 if not any(word in filename_clean for word in title.lower().split() if len(word) > 3):
                     filename_mismatch.append((fp, title))
 
-    # ── Report ───────────────────────────────────────────────────────────────
+    # Check embedded art sizes
+    print("  Checking embedded art sizes...")
+    from mutagen.flac import FLAC
+    from mutagen.id3 import ID3, ID3NoHeaderError
+    from mutagen.mp4 import MP4
+
+    for fp in files:
+        ext = Path(fp).suffix.lower()
+        art_bytes = 0
+        try:
+            if ext == ".flac":
+                audio = FLAC(fp)
+                art_bytes = sum(len(p.data) for p in audio.pictures)
+            elif ext == ".mp3":
+                try:
+                    audio = ID3(fp)
+                    for frame_id in audio.keys():
+                        if frame_id.startswith("APIC"):
+                            apic = audio[frame_id]
+                            if hasattr(apic, "data"):
+                                art_bytes += len(apic.data)
+                except ID3NoHeaderError:
+                    pass
+            elif ext in (".m4a", ".m4p", ".alac", ".mp4"):
+                audio = MP4(fp)
+                if "covr" in audio:
+                    art_bytes = sum(len(p) for p in audio["covr"])
+        except Exception:
+            continue
+
+        if art_bytes > art_threshold_bytes:
+            oversized_art.append((fp, art_bytes))
+
     issues = {
         "Files with no tags at all":     f"{len(missing_all):,}",
         "Missing artist tag":            f"{len(missing_artist):,}",
@@ -203,6 +236,7 @@ def tag_audit(directory: str, cache_path: str = None, workers: int = 4):
         "Missing title tag":             f"{len(missing_title):,}",
         "Suspicious tag values":         f"{len(suspicious_tags):,}",
         "Title doesn't match filename":  f"{len(filename_mismatch):,}",
+        f"Oversized embedded art (>{art_size_threshold_mb}MB)": f"{len(oversized_art):,}",
     }
     ui.kv_table("Tag issues found", issues)
 
@@ -213,6 +247,14 @@ def tag_audit(directory: str, cache_path: str = None, workers: int = 4):
             "Suspicious tag values",
             [f"{label}=\"{value}\"  →  {fp}" for fp, label, value in suspicious_tags],
             limit=10,
+        )
+    if oversized_art:
+        from boxraudio.preflight import format_bytes
+        oversized_art.sort(key=lambda x: x[1], reverse=True)
+        ui.file_table(
+            f"Files with oversized embedded art (consider --sanitize-tags --strip-art)",
+            [f"{format_bytes(size)}  →  {fp}" for fp, size in oversized_art],
+            limit=20,
         )
 
 

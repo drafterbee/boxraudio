@@ -147,6 +147,50 @@ def interactive_mode(config_path: str = None) -> dict:
         default=args.get("clean_empty_dirs", True),
     )
 
+    # Sanitization
+    ui.section("Tag sanitization")
+    ui.info("Sanitization strips superfluous metadata (encoder noise, iTunes")
+    ui.info("internals, MusicBrainz IDs, custom user-defined fields, etc.)")
+    ui.info("from files. This is destructive and not reversible.")
+
+    args["sanitize_on_move"] = ui.confirm(
+        "Auto-sanitize files when they move from source to backup?",
+        default=args.get("sanitize_on_move", False),
+    )
+
+    if args["sanitize_on_move"]:
+        args["strip_art"] = ui.confirm(
+            "Also strip embedded album art? (Default: keep)",
+            default=args.get("strip_art", False),
+        )
+        args["strip_lyrics"] = ui.confirm(
+            "Also strip lyrics? (Default: keep)",
+            default=args.get("strip_lyrics", False),
+        )
+
+        existing_keep = args.get("keep_tags") or []
+        if existing_keep:
+            ui.dim(f"Currently configured extra tags to keep:")
+            for k in existing_keep:
+                ui.dim(f"  • {k}")
+            if not ui.confirm("Keep these?", default=True):
+                existing_keep = []
+
+        if ui.confirm("Add additional tags to preserve beyond the defaults?",
+                      default=False):
+            ui.info("Defaults already kept: artist, album, title, track,")
+            ui.info("disc, date, genre, composer, replaygain_*, art, lyrics,")
+            ui.info("chapter info.")
+            while True:
+                new_tag = ui.prompt(
+                    f"Tag name to keep (Enter to {'finish' if existing_keep else 'skip'})",
+                    default="",
+                ).strip()
+                if not new_tag:
+                    break
+                existing_keep.append(new_tag.lower())
+        args["keep_tags"] = existing_keep
+
     # Sync options
     args["mirror"] = ui.confirm(
         "Use rsync mirror mode (deletes files at destination not in source)?",
@@ -177,6 +221,10 @@ def interactive_mode(config_path: str = None) -> dict:
         "Dedupe format":     args.get("dedupe_format") or "(none)",
         "Dedupe searches":   "\n".join(args.get("dedupe_search") or []) or "(none)",
         "Clean empty dirs":  "yes" if args.get("clean_empty_dirs") else "no",
+        "Sanitize on move":  "yes" if args.get("sanitize_on_move") else "no",
+        "Strip album art":   "yes" if args.get("strip_art") else "no (keep)",
+        "Strip lyrics":      "yes" if args.get("strip_lyrics") else "no (keep)",
+        "Extra keep tags":   ", ".join(args.get("keep_tags") or []) or "(none)",
         "Mirror sync":       "yes" if args.get("mirror") else "no",
         "Size-only sync":    "yes" if args.get("size_only") else "no",
         "Dedupe method":     args.get("dedupe_method", "tag (default)"),
@@ -244,7 +292,9 @@ def _save_profile(config_path: str, name: str, args: dict):
                 "sync_source", "sync_destinations",
                 "dedupe_format", "dedupe_search",
                 "clean_empty_dirs", "mirror", "size_only",
-                "dedupe_method"):
+                "dedupe_method",
+                "sanitize_on_move", "strip_art", "strip_lyrics",
+                "keep_tags"):
         v = args.get(key)
         if v is not None and v != "" and v != [] and v != "(none)":
             profile_data[key] = v

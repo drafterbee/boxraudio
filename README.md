@@ -11,7 +11,7 @@
 
 > **Smart sync, lossless integrity — open-source music library management for people who care about their files.**
 
-BoxR is a versatile media library tool that handles the full lifecycle of importing new music: moving files to your master backup, deduplicating lower-quality copies, and synchronizing changes to portable devices — with smart caching, parallel processing, transaction logging, and audio integrity verification.
+BoxR is a versatile media library tool that handles the full lifecycle of importing new music: moving files to your master backup, deduplicating lower-quality copies, sanitizing metadata, and synchronizing changes to portable devices — with smart caching, parallel processing, transaction logging, and audio integrity verification.
 
 Invoke with the `boxraudio` command.
 
@@ -28,7 +28,14 @@ Invoke with the `boxraudio` command.
 - **Spectrum analysis** — detect lossy files repackaged as FLAC via FFT analysis
 - **AcoustID fingerprinting** — match audio content, not just tags (requires chromaprint)
 - **Quality reporting** — see your library's bitrate and format composition
-- **Tag quality checks** — flag files with missing or malformed metadata
+- **Tag quality checks** — flag files with missing or malformed metadata, plus oversized embedded album art
+
+### Tag Management
+- **Tag sanitization** — strip superfluous metadata that bloats files or causes playback database issues
+- **Configurable keep list** — choose which tags to preserve per profile or globally
+- **Album art and lyrics control** — kept by default, strippable on demand
+- **Auto-sanitize on move** — opt-in cleanup as files flow from source to backup
+- **Custom user-defined fields always removed** — non-negotiable for library hygiene
 
 ### User Experience
 - **Rich terminal UI** — beautiful tables, progress bars, and panels
@@ -64,6 +71,11 @@ The installer will:
 4. Install the `boxraudio` command to `/usr/local/bin/`
 5. Create default config at `~/.boxraudio.yaml`
 
+System dependencies for audio analysis:
+```bash
+brew install chromaprint ffmpeg
+```
+
 ---
 
 ## Quick Start
@@ -74,10 +86,15 @@ boxraudio --help                # full options reference
 boxraudio --interactive         # guided setup
 boxraudio --profile ipod --run  # run with a saved profile
 
-# Audits
-boxraudio --audit-quality --target "/path/to/library"
-boxraudio --audit-tags    --target "/path/to/library"
-boxraudio --report-quality --target "/path/to/library"
+# Library audits
+boxraudio --audit-quality   --target "/path/to/library"
+boxraudio --audit-tags      --target "/path/to/library"
+boxraudio --report-quality  --target "/path/to/library"
+
+# Tag sanitization
+boxraudio --sanitize-tags --target "/path/to/library" --run
+boxraudio --sanitize-tags --target ~/MusicLibrary --strip-art --run
+boxraudio --sanitize-tags --target ~/MusicLibrary --keep-tag custom_field --run
 
 # Stats and history
 boxraudio --stats
@@ -93,7 +110,70 @@ boxraudio --profile ipod --profile phone --run
 
 # Content-based dedup using fingerprints
 boxraudio --profile ipod --dedupe-method fingerprint --run
+
+# Full pipeline with auto-sanitize
+boxraudio --profile ipod --sanitize-on-move --run
 ```
+
+---
+
+## Tag Sanitization
+
+BoxR can strip superfluous metadata from your audio files to reduce bloat, prevent playback database issues, and standardize your library.
+
+### What's kept by default
+
+- **Identification:** `artist`, `albumartist`, `album`, `title`, `tracknumber`, `discnumber`, `date`, `year`, `genre`, `composer`, `performer`, `conductor`
+- **ReplayGain (all variants):** `replaygain_track_gain`, `replaygain_album_gain`, peaks, reference loudness
+- **Embedded album art** — kept by default, use `--strip-art` to remove
+- **Lyrics** — kept by default, use `--strip-lyrics` to remove
+- **Chapter info** — `CHAP` and `CTOC` frames are always preserved
+
+### What's always removed
+
+- **Custom user-defined fields** — `TXXX` frames in ID3, `_*` keys in FLAC, freeform atoms in MP4 (this is not configurable)
+- **MusicBrainz IDs** — often very large
+- **iTunes-specific tags** — `itunsmpb`, `itunnorm`, `itunpgap`, `itunes_cddb_*`
+- **Encoder noise** — `encoder`, `encoded_by`, `encoder_settings`, `tool`, `tool_version`
+- **Comment fields** — often contain ripper artifacts
+- **Origin metadata** — `purl`, `rip`, `source`, `media`, `label`, `publisher`, `barcode`, `catalognumber`, `isrc`, `originaldate`, `originalalbum`, `asin`
+- **Compilation flag**, `language`, `creation_time`
+
+### Configuring extra tags to keep
+
+In `~/.boxraudio.yaml`:
+
+```yaml
+defaults:
+  keep_tags:
+    - my_custom_field
+    - another_field
+```
+
+Or via CLI for a one-off:
+
+```bash
+boxraudio --sanitize-tags --target ~/MusicLibrary --keep-tag my_field --keep-tag other --run
+```
+
+### Auto-sanitize on move
+
+Enable in a profile to clean tags automatically as files flow from source to backup:
+
+```yaml
+profiles:
+  ipod:
+    source: ~/Desktop/MusicTFR
+    backup: /Volumes/Media Backup/Audio/FLAC
+    sanitize_on_move: true
+```
+
+Or via CLI:
+```bash
+boxraudio --profile ipod --sanitize-on-move --run
+```
+
+**Note:** Sanitization is irreversible — `--undo` does not restore stripped tags. Run a dry run first to see what would be removed.
 
 ---
 
@@ -106,6 +186,13 @@ defaults:
   cache_file: ~/.boxraudio_cache.db
   workers: 4
   size_only: true
+
+  # Sanitization defaults
+  sanitize_on_move: false
+  # strip_art: false
+  # strip_lyrics: false
+  # keep_tags:
+  #   - extra_field_to_keep
 
 profiles:
   ipod:
@@ -120,6 +207,7 @@ profiles:
       - /Volumes/IPOD/Audio/MP3
     clean_empty_dirs: true
     mirror: true
+    sanitize_on_move: true
 
   phone:
     source: ~/Desktop/MusicTFR
@@ -148,6 +236,7 @@ boxraudio/
 │   ├── fingerprint.py       # AcoustID/Chromaprint
 │   ├── spectrum.py          # Lossy detection via FFT
 │   ├── audits.py            # Quality & tag audits
+│   ├── sanitize.py          # Tag sanitization
 │   ├── operations.py        # File operations primitives
 │   ├── stats.py             # Library stats + history
 │   ├── preflight.py         # Disk space + pre-flight summary

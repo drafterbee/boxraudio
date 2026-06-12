@@ -107,6 +107,22 @@ def main():
     parser.add_argument("--target", metavar="PATH",
                         help="Target directory for audit/report commands")
 
+    # Sanitization (Phase 4)
+    parser.add_argument("--sanitize-tags", action="store_true",
+                        help="Strip superfluous metadata from files (standalone command)")
+    parser.add_argument("--sanitize-on-move", action="store_true",
+                        help="Auto-sanitize files as they move from source to backup")
+    parser.add_argument("--strip-art", action="store_true",
+                        help="Also strip embedded album art when sanitizing")
+    parser.add_argument("--strip-lyrics", action="store_true",
+                        help="Also strip lyrics when sanitizing")
+    parser.add_argument("--keep-tag", action="append", metavar="TAG",
+                        help="Additional tag(s) to preserve during sanitization "
+                             "(can be specified multiple times)")
+    parser.add_argument("--art-threshold-mb", type=float, default=1.0,
+                        help="Flag embedded art larger than this many MB "
+                             "in tag audits (default: 1.0)")
+
     # Output
     parser.add_argument("--report",    metavar="FILE",
                         help="Save full report to this file")
@@ -167,6 +183,14 @@ def main():
    boxraudio --undo
    boxraudio --resume
    boxraudio --list-resumable
+
+[yellow]9. Sanitize tags (strip superfluous metadata):[/yellow]
+   boxraudio --sanitize-tags --target "/Volumes/Media Backup/Audio" --run
+   boxraudio --sanitize-tags --target ~/MusicLibrary --strip-art --run
+   boxraudio --sanitize-tags --target ~/MusicLibrary --keep-tag custom_tag --run
+
+[yellow]10. Auto-sanitize during sync:[/yellow]
+   boxraudio --profile ipod --sanitize-on-move --run
 """
         ui.console.print(examples)
         sys.exit(0)
@@ -274,6 +298,90 @@ def main():
             remove_checkpoint(latest["_checkpoint_path"])
         sys.exit(exit_code)
 
+    # ── Phase 4 sanitize-tags (standalone) ────────────────────────────────────
+    if args.sanitize_tags:
+        target = args.target
+        if not target:
+            target = args.backup or args.source
+            if not target and args.dedupe_search:
+                target = args.dedupe_search[0]
+            if not target and args.profile:
+                try:
+                    profile = get_profile(config, args.profile[0])
+                    target = profile.get("backup") or profile.get("source")
+                except ConfigError:
+                    pass
+
+        if not target:
+            ui.error("--sanitize-tags needs --target, --source, --backup, or a --profile that provides one.")
+            sys.exit(1)
+
+        target = os.path.expanduser(target)
+
+        # Build keep_tags set from config defaults + CLI additions
+        from boxraudio.sanitize import (
+            sanitize_directory, DEFAULT_KEEP_TAGS, ALWAYS_STRIP_PATTERNS
+        )
+
+        defaults_for_sanitize = get_defaults(config)
+        keep_tags = set(DEFAULT_KEEP_TAGS)
+        # Allow config to extend the keep list
+        config_keep = defaults_for_sanitize.get("keep_tags") or []
+        for t in config_keep:
+            keep_tags.add(t.lower())
+        # Apply --keep-tag CLI additions
+        if args.keep_tag:
+            for t in args.keep_tag:
+                keep_tags.add(t.lower())
+
+        ui.section(f"Sanitize tags — {target}")
+        ui.info(f"Mode: {'DRY RUN' if not args.run else 'LIVE RUN'}")
+        ui.info(f"Strip album art:  {'yes' if args.strip_art else 'no (keep)'}")
+        ui.info(f"Strip lyrics:     {'yes' if args.strip_lyrics else 'no (keep)'}")
+        ui.info(f"Keep tags ({len(keep_tags)}): {', '.join(sorted(keep_tags))}")
+
+        if args.run and not args.no_confirm:
+            if not ui.confirm("Proceed with sanitization? (NOT REVERSIBLE)",
+                              default=False):
+                ui.warning("Cancelled.")
+                sys.exit(0)
+
+        result = sanitize_directory(
+            target,
+            keep_tags=keep_tags,
+            strip_art=args.strip_art,
+            strip_lyrics=args.strip_lyrics,
+            strip_patterns=ALWAYS_STRIP_PATTERNS,
+            dry_run=not args.run,
+            art_size_threshold_mb=args.art_threshold_mb,
+        )
+
+        summary = {
+            "Total files":        f"{result['total_files']:,}",
+            "Modified":           f"{result['modified_files']:,}",
+            "Errors":             f"{len(result['errors']):,}",
+            "Oversized art":      f"{len(result['oversized_art']):,}",
+        }
+        if args.strip_art and args.run:
+            from boxraudio.preflight import format_bytes
+            summary["Bytes freed"] = format_bytes(result["total_bytes_freed"])
+        ui.kv_table("Sanitize summary", summary)
+
+        if result["oversized_art"]:
+            from boxraudio.preflight import format_bytes
+            result["oversized_art"].sort(key=lambda x: x[1], reverse=True)
+            ui.file_table(
+                "Files with oversized art",
+                [f"{format_bytes(size)}  →  {fp}"
+                 for fp, size in result["oversized_art"]],
+                limit=20,
+            )
+
+        if result["errors"]:
+            ui.warning(f"{len(result['errors'])} errors occurred — see logs above")
+
+        sys.exit(0)
+
     # ── Phase 2 audits ────────────────────────────────────────────────────────
     if args.audit_quality or args.audit_tags or args.report_quality:
         target = args.target
@@ -359,6 +467,11 @@ def main():
             "rebuild_cache":    args.rebuild_cache,
             "profile":          profile_name,
             "report":           args.report,
+            # Sanitization options
+            "sanitize_on_move": defaults.get("sanitize_on_move", False),
+            "strip_art":        defaults.get("strip_art", False),
+            "strip_lyrics":     defaults.get("strip_lyrics", False),
+            "keep_tags":        defaults.get("keep_tags") or [],
         }
 
         if profile_name:
@@ -399,6 +512,16 @@ def main():
             pipeline_args["mirror"] = True
         if args.size_only:
             pipeline_args["size_only"] = True
+        if args.sanitize_on_move:
+            pipeline_args["sanitize_on_move"] = True
+        if args.strip_art:
+            pipeline_args["strip_art"] = True
+        if args.strip_lyrics:
+            pipeline_args["strip_lyrics"] = True
+        if args.keep_tag:
+            pipeline_args["keep_tags"] = list(set(
+                (pipeline_args.get("keep_tags") or []) + args.keep_tag
+            ))
 
         for k in ("source", "backup", "sync_source", "cache_file"):
             if pipeline_args.get(k):

@@ -1,23 +1,5 @@
 # BoxR configuration
 # Located at ~/.boxraudio.yaml
-#
-# Global defaults apply to all runs unless overridden by flags or profile.
-# Profiles let you save common command-line invocations under a short name.
-#
-# Usage:
-#   boxraudio --profile ipod --run
-#   boxraudio --profile ipod --source ~/Downloads/extra --run
-#
-# Path concepts:
-#   source            — where new files come from (e.g. ~/Desktop/MusicTFR)
-#   backup            — where source files get MOVED to (preserves Artist/Album)
-#   destination       — default sync target (used when no sync_destination given)
-#   sync_source       — explicit rsync source root (defaults to backup, then source)
-#   sync_destination  — explicit rsync target root (defaults to destination)
-#
-# When backup and destination have different structures (e.g. backup is
-# /Audio/FLAC but destination is /Audio), use sync_source and sync_destination
-# to control exactly which directories get mirrored.
 
 defaults:
   cache_file: ~/.boxraudio_cache.db
@@ -25,11 +7,32 @@ defaults:
   size_only: true
   show_banner: true
 
+  # ── Sanitization ────────────────────────────────────────────────────────────
+  # Whether to auto-sanitize tags when files move from source to backup.
+  sanitize_on_move: false
+
+  # By default BoxR keeps these tags during sanitization:
+  #   artist, albumartist, album, title, tracknumber, totaltracks,
+  #   discnumber, totaldiscs, date, year, genre, composer,
+  #   replaygain_* (all variants), performer, conductor
+  # Plus: embedded album art and lyrics are kept by default.
+  # Plus: chapter info (CHAP/CTOC) is always kept.
+  # Always removed: custom user-defined fields, MusicBrainz IDs,
+  #   encoder noise, iTunes-specific tags, comments.
+  #
+  # Add additional tags to preserve here:
+  # keep_tags:
+  #   - my_custom_keep_tag
+  #
+  # To strip album art / lyrics globally, set these to true:
+  # strip_art: false
+  # strip_lyrics: false
+
 profiles:
   ipod:
     source: ~/Desktop/MusicTFR
     backup: /Volumes/Media Backup/Audio/FLAC
-    destination: /Volumes/IPOD/Audio
+    destination: /Volumes/IPOD/Audio/FLAC
     sync_source: /Volumes/Media Backup/Audio/FLAC
     sync_destination: /Volumes/IPOD/Audio/FLAC
     dedupe_format: mp3
@@ -39,18 +42,4 @@ profiles:
     clean_empty_dirs: true
     mirror: true
     size_only: true
-
-  # Example: sync MP3s separately
-  # ipod_mp3:
-  #   source: ~/Desktop/MusicTFR_MP3
-  #   backup: /Volumes/Media Backup/Audio/MP3
-  #   sync_source: /Volumes/Media Backup/Audio/MP3
-  #   sync_destination: /Volumes/IPOD/Audio/MP3
-  #   mirror: true
-
-  # Example: full library mirror (no FLAC/MP3 separation)
-  # phone:
-  #   source: ~/Desktop/MusicTFR
-  #   backup: /Volumes/Media Backup/Audio
-  #   destination: /Volumes/Phone/Music
-  #   mirror: true
+    sanitize_on_move: true   # auto-clean tags as files are moved
