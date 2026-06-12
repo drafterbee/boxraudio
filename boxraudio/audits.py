@@ -18,6 +18,7 @@ from boxraudio.scanner import (
 )
 from boxraudio.cache import TagCache
 from boxraudio import spectrum
+from boxraudio.constants import DEFAULT_ART_SIZE_THRESHOLD_MB
 
 
 # ─── Quality report ───────────────────────────────────────────────────────────
@@ -139,8 +140,10 @@ TRACK_NUM_PATTERN = re.compile(r"^track\s*\d+$", re.IGNORECASE)
 
 
 def tag_audit(directory: str, cache_path: str = None, workers: int = 4,
-              art_size_threshold_mb: float = 1.0):
+              art_size_threshold_mb: float = None):
     """Find files with missing/suspicious metadata. Also report oversized embedded art."""
+    if art_size_threshold_mb is None:
+        art_size_threshold_mb = DEFAULT_ART_SIZE_THRESHOLD_MB
     ui.section(f"Tag audit — {directory}")
 
     if not os.path.isdir(directory):

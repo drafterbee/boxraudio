@@ -1,9 +1,14 @@
-mutagen>=1.47
+# Core dependencies — required for all functionality
+mutagen>=1.47,<2.0
 tqdm>=4.66
 rich>=13.7
 pyyaml>=6.0
+psutil>=5.9
+
+# Audio analysis dependencies — required for --audit-quality
 numpy>=1.26
 scipy>=1.12
-psutil>=5.9
-pyacoustid>=1.3
 soundfile>=0.12
+
+# Fingerprinting (optional — chromaprint binary required separately via brew)
+pyacoustid>=1.3

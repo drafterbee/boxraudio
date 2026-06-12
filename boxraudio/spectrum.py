@@ -31,6 +31,16 @@ try:
 except ImportError:
     SOUNDFILE_AVAILABLE = False
 
+from boxraudio.constants import (
+    SPECTRUM_WINDOW_POSITIONS as WINDOW_POSITIONS,
+    SPECTRUM_WINDOW_DURATION_SECS as WINDOW_DURATION,
+    SPECTRUM_LOUDNESS_GATE_DBFS as LOUDNESS_GATE_DBFS,
+    SPECTRUM_SLOPE_STEEP as SLOPE_STEEP,
+    SPECTRUM_SLOPE_MODERATE as SLOPE_MODERATE,
+    SPECTRUM_NOISE_FLOOR_DB as NOISE_FLOOR_DB,
+    SPECTRUM_CUTOFF_TOLERANCE as CUTOFF_TOLERANCE,
+)
+
 
 # Known lossy encoder cutoff ceilings (Hz)
 LOSSY_CUTOFFS = {
@@ -40,22 +50,6 @@ LOSSY_CUTOFFS = {
     "AAC (~256k)":  20000,
     "AAC/MP3 (~320k)": 20500,
 }
-
-CUTOFF_TOLERANCE = 500   # Hz
-
-# Multi-window sampling positions (fractional file offsets)
-WINDOW_POSITIONS = [0.10, 0.25, 0.50, 0.75, 0.90]
-WINDOW_DURATION  = 10.0   # seconds per window
-
-# Loudness gate: skip windows quieter than this RMS dBFS
-LOUDNESS_GATE_DBFS = -30.0
-
-# Slope thresholds (dB per kHz, computed across a 1kHz window around the cutoff)
-SLOPE_STEEP    = -50.0   # at or below: brick wall (likely lossy)
-SLOPE_MODERATE = -20.0   # between: ambiguous
-
-# Noise floor for cutoff detection (dB below peak)
-NOISE_FLOOR_DB = -90.0
 
 
 def is_available() -> bool:

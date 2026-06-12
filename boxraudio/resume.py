@@ -16,8 +16,10 @@ import signal
 from pathlib import Path
 
 
+from boxraudio.constants import CHECKPOINT_MAX_AGE_SECS
+
 CHECKPOINT_DIR = os.path.expanduser("~/.boxraudio_checkpoints")
-CHECKPOINT_MAX_AGE = 7 * 24 * 3600   # 7 days
+CHECKPOINT_MAX_AGE = CHECKPOINT_MAX_AGE_SECS
 
 
 class Checkpoint:
@@ -47,9 +49,13 @@ class Checkpoint:
         """Save checkpoint on SIGINT and SIGTERM."""
         def handler(signum, frame):
             self.mark_interrupted(reason=f"signal_{signum}")
-            # Re-raise so default handling still happens
-            signal.signal(signum, signal.SIG_DFL)
-            os.kill(os.getpid(), signum)
+            # Restore default handler so a second signal will hard-kill
+            try:
+                signal.signal(signum, signal.SIG_DFL)
+            except (ValueError, OSError):
+                pass
+            # Raise KeyboardInterrupt so top-level cleanup runs
+            raise KeyboardInterrupt(f"Interrupted by signal {signum}")
         try:
             signal.signal(signal.SIGINT, handler)
             signal.signal(signal.SIGTERM, handler)

@@ -92,6 +92,11 @@ def interactive_mode(config_path: str = None) -> dict:
         )
         if not new_dest:
             break
+        if not os.path.exists(new_dest):
+            ui.warning(
+                f"Note: {new_dest} doesn't currently exist. If this is a removable "
+                f"device, make sure it's mounted before running the pipeline."
+            )
         destinations.append(new_dest)
 
     args["destinations"] = destinations
@@ -200,6 +205,32 @@ def interactive_mode(config_path: str = None) -> dict:
         "Use --size-only (recommended for FAT32 devices)?",
         default=args.get("size_only", True),
     )
+
+    # Advanced options (opt-in to avoid overwhelming new users)
+    if ui.confirm("Show advanced options (workers, cache, rsync flags)?",
+                  default=False):
+        workers_str = ui.prompt(
+            "Parallel tag-reading workers (1-16)",
+            default=str(args.get("workers", 4)),
+        ).strip()
+        try:
+            args["workers"] = max(1, min(16, int(workers_str)))
+        except ValueError:
+            ui.warning(f"Invalid worker count, keeping {args.get('workers', 4)}")
+
+        cache_str = ui.prompt(
+            "Cache file path",
+            default=args.get("cache_file") or os.path.expanduser("~/.boxraudio_cache.db"),
+        ).strip()
+        if cache_str:
+            args["cache_file"] = os.path.expanduser(cache_str)
+
+        rsync_str = ui.prompt(
+            "Extra rsync flags (advanced — leave blank for none)",
+            default=args.get("rsync_flags") or "",
+        ).strip()
+        if rsync_str:
+            args["rsync_flags"] = rsync_str
 
     # Dedupe method
     if args.get("dedupe_format"):

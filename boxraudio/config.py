@@ -68,7 +68,16 @@ def expand_paths(d: dict) -> dict:
 
 
 def get_profile(config: dict, profile_name: str) -> dict:
-    """Get a named profile, merged with global defaults."""
+    """
+    Get a named profile, merged with global defaults.
+
+    Merge semantics:
+    - Scalar values from the profile override defaults
+    - List values from the profile REPLACE the defaults list (do not concat)
+      — this means if defaults has dedupe_search: [a] and profile has
+      dedupe_search: [b, c], you get [b, c], not [a, b, c]. To extend the
+      defaults list, repeat the items you want to keep.
+    """
     if profile_name not in config.get("profiles", {}):
         raise ConfigError(f"Profile '{profile_name}' not found in config.")
 

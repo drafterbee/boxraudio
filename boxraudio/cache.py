@@ -7,6 +7,8 @@ import sqlite3
 from contextlib import contextmanager
 
 
+SCHEMA_VERSION = 1
+
 SCHEMA = """
 CREATE TABLE IF NOT EXISTS files (
     filepath    TEXT PRIMARY KEY,
@@ -23,6 +25,11 @@ CREATE TABLE IF NOT EXISTS files (
 
 CREATE INDEX IF NOT EXISTS idx_files_tags
     ON files (artist, album, title);
+
+CREATE TABLE IF NOT EXISTS metadata (
+    key   TEXT PRIMARY KEY,
+    value TEXT NOT NULL
+);
 """
 
 
@@ -35,11 +42,39 @@ class TagCache:
     def _init_db(self):
         with self._connection() as conn:
             conn.executescript(SCHEMA)
+            # Record schema version on first init
+            row = conn.execute(
+                "SELECT value FROM metadata WHERE key = 'schema_version'"
+            ).fetchone()
+            if not row:
+                conn.execute(
+                    "INSERT INTO metadata (key, value) VALUES (?, ?)",
+                    ("schema_version", str(SCHEMA_VERSION)),
+                )
+
+    def schema_version(self) -> int:
+        """Return the current cache schema version, or 0 if unknown."""
+        try:
+            with self._connection() as conn:
+                row = conn.execute(
+                    "SELECT value FROM metadata WHERE key = 'schema_version'"
+                ).fetchone()
+                if row:
+                    return int(row["value"])
+        except sqlite3.Error:
+            pass
+        return 0
 
     @contextmanager
     def _connection(self):
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
+        # WAL mode allows concurrent reads while a write is in progress
+        try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.Error:
+            pass
         try:
             yield conn
             conn.commit()

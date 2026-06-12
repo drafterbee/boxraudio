@@ -15,6 +15,8 @@ import shutil
 import subprocess
 from pathlib import Path
 
+from boxraudio.constants import FINGERPRINT_MATCH_THRESHOLD
+
 
 def is_available() -> bool:
     """Returns True if fpcalc (chromaprint) is installed."""
@@ -64,16 +66,14 @@ def fingerprint_file(filepath: str, length_secs: int = 120) -> dict:
         return {"path": filepath, "error": str(e)}
 
 
-def fingerprints_match(fp1: str, fp2: str, threshold: float = 0.95) -> tuple:
+def fingerprints_match(fp1: str, fp2: str, threshold: float = None) -> tuple:
     """
     Compare two Chromaprint fingerprints for similarity.
 
     Returns (matches, score) where matches is True if similarity >= threshold.
-
-    Chromaprint fingerprints are sequences of 32-bit integers. We compare
-    them by computing Hamming distance between corresponding hash values
-    and converting to a similarity score (1.0 = identical, 0.0 = unrelated).
     """
+    if threshold is None:
+        threshold = FINGERPRINT_MATCH_THRESHOLD
     if not fp1 or not fp2:
         return False, 0.0
 

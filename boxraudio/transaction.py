@@ -11,9 +11,11 @@ from contextlib import contextmanager
 from pathlib import Path
 
 
+from boxraudio.constants import QUARANTINE_MAX_AGE_SECS
+
 TRANSACTION_DB        = os.path.expanduser("~/.boxraudio_transactions.db")
 QUARANTINE_DIR        = os.path.expanduser("~/.boxraudio_quarantine")
-QUARANTINE_MAX_AGE    = 30 * 24 * 3600   # 30 days
+QUARANTINE_MAX_AGE    = QUARANTINE_MAX_AGE_SECS
 
 
 SCHEMA = """
@@ -58,6 +60,11 @@ class TransactionLog:
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.Error:
+            pass
+        try:
             yield conn
             conn.commit()
         finally:
@@ -101,6 +108,23 @@ class TransactionLog:
             self.start_session()
         quarantine_base = os.path.join(self.quarantine, f"session_{self.session_id}")
         os.makedirs(quarantine_base, exist_ok=True)
+
+        # Check space before copying — refuse to add to quarantine if it would
+        # fill the disk holding the quarantine directory
+        try:
+            file_size = os.path.getsize(filepath)
+            disk_usage = shutil.disk_usage(self.quarantine)
+            # Require 1GB free buffer + 2x the file size as safety margin
+            if disk_usage.free < (file_size * 2 + 1_000_000_000):
+                # Skip quarantine — log without backup
+                self._log_action("delete", {
+                    "original":   filepath,
+                    "quarantine": None,
+                    "note":       "quarantine skipped due to low disk space",
+                })
+                return
+        except OSError:
+            pass
 
         rel = filepath.lstrip("/")
         quarantine_path = os.path.join(quarantine_base, rel)

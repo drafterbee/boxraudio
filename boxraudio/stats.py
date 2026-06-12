@@ -77,6 +77,11 @@ class StatsTracker:
         conn = sqlite3.connect(self.db_path, timeout=30.0)
         conn.row_factory = sqlite3.Row
         try:
+            conn.execute("PRAGMA journal_mode=WAL")
+            conn.execute("PRAGMA synchronous=NORMAL")
+        except sqlite3.Error:
+            pass
+        try:
             yield conn
             conn.commit()
         finally:
@@ -95,17 +100,18 @@ class StatsTracker:
         return self.current_run_id
 
     def record_metrics(self, **kwargs):
-        """Update metrics on the current run."""
+        """Increment metrics on the current run."""
         if not self.current_run_id:
             return
         allowed = {
             "files_moved", "files_deleted", "dirs_removed",
             "files_synced", "bytes_synced", "errors",
         }
-        updates = {k: v for k, v in kwargs.items() if k in allowed}
+        updates = {k: v for k, v in kwargs.items() if k in allowed and v}
         if not updates:
             return
-        set_clause = ", ".join(f"{k} = ?" for k in updates)
+        # Use SQL increment so multiple steps add to existing values
+        set_clause = ", ".join(f"{k} = COALESCE({k}, 0) + ?" for k in updates)
         params = list(updates.values()) + [self.current_run_id]
         with self._connection() as conn:
             conn.execute(f"UPDATE runs SET {set_clause} WHERE id = ?", params)

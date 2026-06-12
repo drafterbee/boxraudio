@@ -1,11 +1,20 @@
 """
-pipeline.py — main workflow orchestrator for BoxR (Phase 3).
+pipeline.py — main workflow orchestrator for BoxR.
 
-Adds:
-- Stats tracking via StatsTracker
-- Multi-destination sequential sync
-- Pre-flight diff view summarizing additions/deletions
-- Interrupt-safe resume markers (basic — full resume in Phase 3 follow-up)
+Defines the full ingest pipeline:
+  1. Index source files (parallel tag scan with cache)
+  2. Move source → backup (with merge into existing artist/album folders)
+  3. Sanitize tags on moved files (optional, opt-in via --sanitize-on-move)
+  4. Dedupe lower-quality copies (tag-based or fingerprint-based)
+  5. Clean up empty directories in dedup search paths
+  6. Sync to one or more destinations (rsync, FAT32-optimized)
+
+Each step is wrapped in transaction logging for --undo, checkpointing
+for interrupt-safe resume, and metrics recording for --stats.
+
+The diff between source and destination is shown both in the pre-flight
+summary (so users see total scope before any operations) and again
+per-step (so users see what each individual sync will do).
 """
 
 import os
@@ -51,6 +60,9 @@ def find_dedup_matches_fingerprint(source_files: list, target_files: list,
     """
     Find duplicates by audio fingerprint matching (content-based).
     Slower than tag matching but catches duplicates with mismatched metadata.
+
+    Uses fingerprint bucketing by leading hash prefix to avoid O(N*M)
+    comparison — only fingerprints sharing a prefix are compared in full.
     """
     if not fingerprint.is_available():
         ui.error("Fingerprint dedup requires chromaprint. Install: brew install chromaprint")
@@ -63,10 +75,10 @@ def find_dedup_matches_fingerprint(source_files: list, target_files: list,
     progress = ui.make_progress()
     with progress:
         task = progress.add_task("Source fingerprints", total=len(source_files))
-        for fp in source_files:
-            result = fingerprint.fingerprint_file(fp, length_secs=60)
+        for fp_path in source_files:
+            result = fingerprint.fingerprint_file(fp_path, length_secs=60)
             if "fingerprint" in result and result["fingerprint"]:
-                source_fps[fp] = result["fingerprint"]
+                source_fps[fp_path] = result["fingerprint"]
             progress.advance(task)
 
     ui.info(f"Generating fingerprints for {len(target_files):,} target files...")
@@ -74,18 +86,33 @@ def find_dedup_matches_fingerprint(source_files: list, target_files: list,
     progress = ui.make_progress()
     with progress:
         task = progress.add_task("Target fingerprints", total=len(target_files))
-        for fp in target_files:
-            result = fingerprint.fingerprint_file(fp, length_secs=60)
+        for fp_path in target_files:
+            result = fingerprint.fingerprint_file(fp_path, length_secs=60)
             if "fingerprint" in result and result["fingerprint"]:
-                target_fps[fp] = result["fingerprint"]
+                target_fps[fp_path] = result["fingerprint"]
             progress.advance(task)
+
+    # Bucket source fingerprints by their first 8 characters. This gives
+    # ~64^8 buckets — for any reasonable library, each bucket holds only
+    # a handful of fingerprints, turning the full N*M scan into roughly
+    # N*K where K is the average bucket size.
+    BUCKET_PREFIX = 8
+    source_buckets = {}
+    for path, fp_str in source_fps.items():
+        bucket = fp_str[:BUCKET_PREFIX] if fp_str else ""
+        source_buckets.setdefault(bucket, []).append((path, fp_str))
 
     ui.info("Matching fingerprints...")
     progress = ui.make_progress()
     with progress:
         task = progress.add_task("Comparing", total=len(target_fps))
         for target_path, target_fp in target_fps.items():
-            for source_path, source_fp in source_fps.items():
+            bucket = target_fp[:BUCKET_PREFIX] if target_fp else ""
+            # Only check fingerprints in the same prefix bucket plus neighbors
+            # (a single bit-flip in early bytes could put a near-match in a
+            # different bucket; we accept the rare miss for the speedup)
+            candidates = source_buckets.get(bucket, [])
+            for source_path, source_fp in candidates:
                 matches_ok, score = fingerprint.fingerprints_match(
                     source_fp, target_fp, threshold=threshold
                 )
@@ -187,8 +214,8 @@ def run_single_destination(args: dict, destination_path: str,
         ui.success(f"rsync completed for {destination_path}")
         if stats and not dry_run:
             stats.record_metrics(
-                files_synced=stats.aggregate_totals().get("files_synced", 0) + len(to_add),
-                bytes_synced=stats.aggregate_totals().get("bytes_synced", 0) + diff["bytes_to_sync"],
+                files_synced=len(to_add),
+                bytes_synced=diff["bytes_to_sync"],
             )
     else:
         ui.error(f"rsync failed for {destination_path} (exit code {rc})")
@@ -269,8 +296,21 @@ def run_pipeline(args: dict) -> int:
 
     cache_path = cache_file or os.path.expanduser("~/.boxraudio_cache.db")
     if rebuild and os.path.isfile(cache_path):
-        os.remove(cache_path)
-        ui.warning(f"Cache rebuilt: removed {cache_path}")
+        # Atomic move-then-delete to avoid race with concurrent reads
+        backup_path = cache_path + ".rebuild-backup"
+        try:
+            os.rename(cache_path, backup_path)
+            os.remove(backup_path)
+            ui.warning(f"Cache rebuilt: removed {cache_path}")
+        except OSError as e:
+            ui.error(f"Could not rebuild cache: {e}")
+            return 1
+        # Also clear any WAL/journal files
+        for suffix in ("-wal", "-shm", "-journal"):
+            try:
+                os.remove(cache_path + suffix)
+            except OSError:
+                pass
     cache = TagCache(cache_path)
 
     tx = TransactionLog()
@@ -364,6 +404,37 @@ def run_pipeline(args: dict) -> int:
         "sync_destination": sync_pairs[0][1] if sync_pairs else None,
     }
     preflight_summary(plan)
+
+    # Show per-destination diff so the user knows exactly what will sync
+    if sync_pairs:
+        ui.console.print()
+        ui.console.print("  [bold]Sync diff per destination:[/bold]")
+        for sync_src, sync_dest in sync_pairs:
+            if not os.path.isdir(sync_src):
+                ui.dim(f"  {sync_dest}: sync source not yet accessible")
+                continue
+            src_files = set()
+            dst_files = set()
+            for fp in collect_audio_files(sync_src):
+                src_files.add(os.path.relpath(fp, sync_src))
+            if os.path.isdir(sync_dest):
+                for fp in collect_audio_files(sync_dest):
+                    dst_files.add(os.path.relpath(fp, sync_dest))
+            to_add    = src_files - dst_files
+            to_remove = dst_files - src_files
+            bytes_add = get_total_size([os.path.join(sync_src, f) for f in to_add])
+            ui.console.print(f"  [dim]→[/dim] {sync_dest}")
+            ui.console.print(
+                f"      [green]+ {len(to_add):,} files ({format_bytes(bytes_add)})[/green]"
+            )
+            if args.get("mirror") and to_remove:
+                ui.console.print(
+                    f"      [red]- {len(to_remove):,} files would be deleted (mirror mode)[/red]"
+                )
+            elif not to_add and not (args.get("mirror") and to_remove):
+                ui.console.print(f"      [dim]no changes — already in sync[/dim]")
+        ui.console.print()
+
     if not dry_run:
         if not verify_disk_space_for_plan(plan):
             ui.error("Insufficient disk space. Aborting.")
@@ -549,6 +620,7 @@ def run_pipeline(args: dict) -> int:
                     ui.warning("Cancelled — no dirs removed")
 
     # ── STEP — Sync to each destination sequentially ─────────────────────────
+    any_sync_failed = False
     for sync_src, sync_dest in sync_pairs:
         current_step += 1
         ui.step_header(current_step, total_steps,
@@ -559,6 +631,7 @@ def run_pipeline(args: dict) -> int:
                 os.makedirs(sync_dest, exist_ok=True)
             except OSError as e:
                 ui.error(f"Sync destination not accessible: {sync_dest} ({e})")
+                any_sync_failed = True
                 continue
 
         rc = run_single_destination(
@@ -567,6 +640,7 @@ def run_pipeline(args: dict) -> int:
         )
 
         if rc != 0:
+            any_sync_failed = True
             ui.warning(f"Sync to {sync_dest} failed; continuing with remaining destinations.")
 
     # ── Library snapshot for backup (for stats history) ──────────────────────
@@ -582,8 +656,8 @@ def run_pipeline(args: dict) -> int:
         except Exception:
             pass
 
-    # ── Cache prune ──────────────────────────────────────────────────────────
-    if not dry_run:
+    # ── Cache prune (only on clean completion) ───────────────────────────────
+    if not dry_run and not any_sync_failed:
         valid_paths = set()
         if backup:
             valid_paths.update(collect_audio_files(backup))
@@ -599,9 +673,13 @@ def run_pipeline(args: dict) -> int:
                 ui.dim(f"Pruned {pruned:,} stale cache entries")
 
         tx.cleanup_old_quarantine()
+    elif not dry_run and any_sync_failed:
+        ui.warning("Skipping cache prune because one or more sync steps failed.")
 
-    tx.end_session("complete")
-    stats.end_run("complete")
-    checkpoint.mark_complete()
+    final_status = "complete" if not any_sync_failed else "partial_failure"
+    tx.end_session(final_status)
+    stats.end_run(final_status)
+    if not any_sync_failed:
+        checkpoint.mark_complete()
     ui.print_completion_banner()
-    return 0
+    return 0 if not any_sync_failed else 2

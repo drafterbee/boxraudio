@@ -14,6 +14,7 @@ from mutagen import File as MutagenFile
 
 from boxraudio import ui
 from boxraudio.cache import TagCache
+from boxraudio.constants import SLOW_FILE_THRESHOLD_SECS, CACHE_WRITE_BATCH_SIZE
 
 
 AUDIO_EXTENSIONS = {
@@ -96,11 +97,13 @@ def collect_audio_files(directory: str, extensions: set = None):
     return found
 
 
-def _scan_single(filepath: str, cache: TagCache, slow_threshold: float = 2.0):
+def _scan_single(filepath: str, cache: TagCache, slow_threshold: float = None):
     """
     Scan a single file. Returns (entry, status, elapsed_secs).
     status is one of: 'hit', 'miss', 'stat_failed'.
     """
+    if slow_threshold is None:
+        slow_threshold = SLOW_FILE_THRESHOLD_SECS
     try:
         st = os.stat(filepath)
     except OSError:
@@ -132,18 +135,20 @@ def _scan_single(filepath: str, cache: TagCache, slow_threshold: float = 2.0):
 
 def scan_files_parallel(filepaths, cache: TagCache,
                         workers: int = 4, description: str = "Scanning",
-                        slow_threshold: float = 2.0) -> dict:
+                        slow_threshold: float = None) -> dict:
     """
     Scan files in parallel. Slow files (>slow_threshold seconds) are reported
     inline while the scan runs.
     """
+    if slow_threshold is None:
+        slow_threshold = SLOW_FILE_THRESHOLD_SECS
     index = {}
     all_entries = []
     skipped = []
     slow_files = []
     hits, misses = 0, 0
     pending_writes = []
-    write_batch_size = 100
+    write_batch_size = CACHE_WRITE_BATCH_SIZE
 
     progress = ui.make_progress()
     with progress:

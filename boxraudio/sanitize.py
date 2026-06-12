@@ -451,7 +451,7 @@ def sanitize_directory(directory: str,
                        strip_patterns: list = None,
                        dry_run: bool = True,
                        extensions: list = None,
-                       art_size_threshold_mb: float = 1.0) -> dict:
+                       art_size_threshold_mb: float = None) -> dict:
     """
     Sanitize all audio files in a directory.
     Reports oversized embedded art files separately.
@@ -467,6 +467,10 @@ def sanitize_directory(directory: str,
         }
     """
     from boxraudio.scanner import AUDIO_EXTENSIONS
+    from boxraudio.constants import DEFAULT_ART_SIZE_THRESHOLD_MB
+
+    if art_size_threshold_mb is None:
+        art_size_threshold_mb = DEFAULT_ART_SIZE_THRESHOLD_MB
 
     if extensions is None:
         extensions = AUDIO_EXTENSIONS
@@ -498,6 +502,10 @@ def sanitize_directory(directory: str,
 
     art_threshold_bytes = int(art_size_threshold_mb * 1024 * 1024)
 
+    # Track which tag fields are getting removed most often
+    from collections import Counter
+    removed_counter = Counter()
+
     progress = ui.make_progress()
     with progress:
         task = progress.add_task("Sanitizing", total=len(files))
@@ -506,11 +514,19 @@ def sanitize_directory(directory: str,
                               strip_patterns, dry_run)
             results.append(r)
             if r.get("errors"):
+                from boxraudio.errors import translate_error
                 for e in r["errors"]:
                     errors.append((fp, e))
-                    progress.console.print(f"  [red]ERROR[/red] {fp}: {e}")
+                    progress.console.print(f"  [red]ERROR[/red] {fp}: {translate_error(e, fp)}")
             if r.get("changed"):
                 modified += 1
+            for removed_key in r.get("removed", []):
+                # Normalize: lowercase, strip < > brackets used for art counts
+                normalized = removed_key.lstrip("<").rstrip(">").lower()
+                # Group ID3 frames by the four-char prefix
+                if len(normalized) >= 4 and normalized[:4].isupper() == False:
+                    pass
+                removed_counter[normalized] += 1
             if r.get("art_bytes", 0) > art_threshold_bytes:
                 oversized.append((fp, r["art_bytes"]))
             if strip_art and r.get("changed"):
@@ -524,4 +540,5 @@ def sanitize_directory(directory: str,
         "oversized_art":     oversized,
         "total_bytes_freed": total_freed,
         "details":           results,
+        "removed_counter":   dict(removed_counter.most_common()),
     }

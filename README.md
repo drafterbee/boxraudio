@@ -85,6 +85,7 @@ boxraudio --examples            # see usage examples
 boxraudio --help                # full options reference
 boxraudio --interactive         # guided setup
 boxraudio --profile ipod --run  # run with a saved profile
+boxraudio --explain --profile ipod    # see what a profile would do
 
 # Library audits
 boxraudio --audit-quality   --target "/path/to/library"
@@ -99,6 +100,7 @@ boxraudio --sanitize-tags --target ~/MusicLibrary --keep-tag custom_field --run
 # Stats and history
 boxraudio --stats
 boxraudio --history --detailed
+boxraudio --cache-info
 
 # Undo / resume
 boxraudio --undo
@@ -114,6 +116,8 @@ boxraudio --profile ipod --dedupe-method fingerprint --run
 # Full pipeline with auto-sanitize
 boxraudio --profile ipod --sanitize-on-move --run
 ```
+
+See [docs/WORKFLOWS.md](docs/WORKFLOWS.md) for common workflows and troubleshooting.
 
 ---
 
@@ -223,22 +227,29 @@ Then: `boxraudio --profile ipod --run` or `boxraudio --profile ipod --profile ph
 
 ```
 boxraudio/
-├── boxraudio_cli            # CLI entry point
+├── boxraudio_cli            # CLI entry point (dispatcher)
 ├── install.sh               # Installer
 ├── requirements.txt         # Python deps
+├── tests/
+│   └── test_smoke.py        # Smoke tests
+├── docs/
+│   └── WORKFLOWS.md         # Common workflows guide
 ├── boxraudio/               # Python package
 │   ├── banner.py            # ASCII art
+│   ├── commands.py          # CLI command handlers
+│   ├── constants.py         # Centralized tunable constants
+│   ├── errors.py            # Error message translation
 │   ├── config.py            # YAML config + profiles
 │   ├── ui.py                # Rich-based UI
-│   ├── cache.py             # SQLite tag cache
-│   ├── transaction.py       # Action logging + undo
+│   ├── cache.py             # SQLite tag cache (WAL mode, schema versioned)
+│   ├── transaction.py       # Action logging + undo (WAL mode)
 │   ├── scanner.py           # Parallel tag scanning
 │   ├── fingerprint.py       # AcoustID/Chromaprint
 │   ├── spectrum.py          # Lossy detection via FFT
 │   ├── audits.py            # Quality & tag audits
 │   ├── sanitize.py          # Tag sanitization
 │   ├── operations.py        # File operations primitives
-│   ├── stats.py             # Library stats + history
+│   ├── stats.py             # Library stats + history (WAL mode)
 │   ├── preflight.py         # Disk space + pre-flight summary
 │   ├── resume.py            # Interrupt-safe checkpointing
 │   ├── interactive.py       # Guided interactive mode
