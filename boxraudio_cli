@@ -106,6 +106,8 @@ def main():
                         help="Generate a library quality report")
     parser.add_argument("-t", "--target", metavar="PATH",
                         help="Target directory for audit/report commands")
+    parser.add_argument("--no-reasons", action="store_true",
+                        help="Suppress inline reasoning in spectrum audit output")
 
     # Sanitization (Phase 4)
     parser.add_argument("-S", "--sanitize-tags", action="store_true",
@@ -422,7 +424,7 @@ def main():
         if args.audit_tags:
             audits.tag_audit(target, cache_path=cache_path, workers=workers)
         if args.audit_quality:
-            audits.spectrum_audit(target)
+            audits.spectrum_audit(target, show_reasons=not args.no_reasons)
 
         sys.exit(0)
 

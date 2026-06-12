@@ -260,7 +260,8 @@ def tag_audit(directory: str, cache_path: str = None, workers: int = 4,
 
 # ─── Spectrum audit ───────────────────────────────────────────────────────────
 
-def spectrum_audit(directory: str, extensions: list = None):
+def spectrum_audit(directory: str, extensions: list = None,
+                   show_reasons: bool = True):
     """Run spectrum analysis to detect lossy transcodes in FLAC files."""
     ui.section(f"Spectrum audit — {directory}")
 
@@ -295,26 +296,43 @@ def spectrum_audit(directory: str, extensions: list = None):
         for fp in files:
             result = spectrum.analyze_file(fp)
             verdict = result.get("verdict", "unknown")
+            sr = result.get("sample_rate", 0)
+            sr_label = f"{sr/1000:.1f}kHz" if sr else "?"
+            cutoff_khz = result.get("cutoff_hz", 0) / 1000
+            slope = result.get("slope", 0)
+            confidence = result.get("confidence", 0)
+
             if verdict == "transcode":
                 transcodes.append(result)
                 progress.console.print(
-                    f"  [red]TRANSCODE[/red] {fp}  "
-                    f"({result.get('cutoff_hz', 0)/1000:.1f}kHz cutoff, "
-                    f"{result.get('suspected_source', '?')})"
+                    f"  [red]TRANSCODE[/red] [{confidence:.0%}] {fp}"
                 )
+                if show_reasons:
+                    progress.console.print(
+                        f"    [dim]cutoff {cutoff_khz:.1f}kHz @ {sr_label}, "
+                        f"slope {slope:.0f} dB/kHz — "
+                        f"{result.get('suspected_source', 'unknown source')}[/dim]"
+                    )
+                    for reason in result.get("reasons", [])[:2]:
+                        progress.console.print(f"    [dim]· {reason}[/dim]")
             elif verdict == "suspicious":
                 suspicious.append(result)
                 progress.console.print(
-                    f"  [yellow]SUSPECT[/yellow] {fp}  "
-                    f"({result.get('cutoff_hz', 0)/1000:.1f}kHz cutoff)"
+                    f"  [yellow]SUSPECT[/yellow] [{confidence:.0%}] {fp}"
                 )
+                if show_reasons:
+                    progress.console.print(
+                        f"    [dim]cutoff {cutoff_khz:.1f}kHz @ {sr_label}, "
+                        f"slope {slope:.0f} dB/kHz[/dim]"
+                    )
+                    for reason in result.get("reasons", [])[:2]:
+                        progress.console.print(f"    [dim]· {reason}[/dim]")
             elif verdict == "lossless":
                 lossless.append(result)
             else:
                 errors.append(result)
             progress.advance(task)
 
-    # ── Summary ──────────────────────────────────────────────────────────────
     summary = {
         "Lossless":   f"{len(lossless):,}",
         "Suspicious": f"{len(suspicious):,}",
@@ -326,12 +344,14 @@ def spectrum_audit(directory: str, extensions: list = None):
     if transcodes:
         ui.file_table(
             "Confirmed transcodes",
-            [f"{r['path']}  ({r.get('suspected_source', '?')})" for r in transcodes],
+            [f"[{r.get('confidence', 0):.0%}]  {r['path']}  ({r.get('suspected_source', '?')})"
+             for r in transcodes],
             limit=20,
         )
     if suspicious:
         ui.file_table(
             "Suspicious files (manual review recommended)",
-            [r["path"] for r in suspicious],
+            [f"[{r.get('confidence', 0):.0%}]  {r['path']}"
+             for r in suspicious],
             limit=20,
         )
