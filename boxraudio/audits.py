@@ -329,8 +329,21 @@ def spectrum_audit(directory: str, extensions: list = None,
                         progress.console.print(f"    [dim]· {reason}[/dim]")
             elif verdict == "lossless":
                 lossless.append(result)
+                if show_reasons:
+                    progress.console.print(
+                        f"  [green]LOSSLESS[/green] [{confidence:.0%}] {fp}"
+                    )
+                    progress.console.print(
+                        f"    [dim]cutoff {cutoff_khz:.1f}kHz @ {sr_label}, "
+                        f"slope {slope:.0f} dB/kHz[/dim]"
+                    )
+                    for reason in result.get("reasons", [])[:2]:
+                        progress.console.print(f"    [dim]· {reason}[/dim]")
             else:
                 errors.append(result)
+                progress.console.print(
+                    f"  [red]ERROR[/red] {fp}  ({result.get('error', '?')})"
+                )
             progress.advance(task)
 
     summary = {
